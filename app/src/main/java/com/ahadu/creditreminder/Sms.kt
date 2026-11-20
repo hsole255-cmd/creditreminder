@@ -3,14 +3,26 @@ package com.ahadu.creditreminder
 import android.content.Context
 import android.os.Build
 import android.telephony.SmsManager
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 object Sms {
     const val DEF_SHOP = "የእኔ ሱቅ"
     const val DEF_ACCOUNT = "ባንክ: ____ ቁጥር: ____"
     const val DEF_TEMPLATE =
         "ውድ ደንበኛችን፣ ከ{ሱቅ} {መጠን} ብር ቀሪ ብድር አለብዎት። እባክዎ ይክፈሉ፦\n{አካውንት}\nእናመሰግናለን።"
+    const val DEF_PROMO =
+        "ሰላም {ስም}፣ ከ{ሱቅ}። አዲስ ምጣድ እና ጥገና አለን። ይደውሉ።"
 
     fun today(): Long = (System.currentTimeMillis() + 3L * 3600000L) / 86400000L
+
+    fun stamp(): String {
+        val f = SimpleDateFormat("dd/MM HH:mm", Locale.US)
+        f.timeZone = TimeZone.getTimeZone("Africa/Addis_Ababa")
+        return f.format(Date())
+    }
 
     fun normalize(p: String): String {
         val s = p.replace(Regex("[\\s\\-()]"), "")
@@ -31,6 +43,12 @@ object Sms {
             .replace("{ሱቅ}", shop)
             .replace("{መጠን}", String.format("%,d", amount))
             .replace("{አካውንት}", account)
+    }
+
+    fun buildPromo(c: Context, name: String): String {
+        val shop = Store.getText(c, "shop", DEF_SHOP)
+        val text = Store.getText(c, "promoText", DEF_PROMO)
+        return text.replace("{ስም}", name).replace("{ሱቅ}", shop)
     }
 
     @Suppress("DEPRECATION")

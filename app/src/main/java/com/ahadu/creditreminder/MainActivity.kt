@@ -194,10 +194,11 @@ fun App() {
         }
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
-            when (tab) {
-                0 -> DebtorsScreen(ctx, debtors)
-                1 -> CustomersScreen(ctx, customers)
-                2 -> HistoryScreen(ctx)
+                        when (tab) {
+                0 -> DashboardScreen(ctx, debtors, customers, { tab = 1 }, { tab = 2 })
+                1 -> CreditScreen(ctx, debtors)
+                2 -> CustomersScreen(ctx, customers)
+                3 -> HistoryScreen(ctx)
                 else -> SettingsScreen(ctx)
             }
         }

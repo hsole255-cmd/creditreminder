@@ -2,6 +2,8 @@ package com.ahadu.creditreminder
 
 import android.content.Context
 import android.telephony.SmsManager
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,11 +37,16 @@ object Sms {
         return sdf.format(Date())
     }
 
+    private fun formatBirr(amount: Long): String {
+        val df = DecimalFormat("#,###", DecimalFormatSymbols(Locale.US))
+        return df.format(amount)
+    }
+
     fun buildMessage(ctx: Context, amount: Long): String {
         val shop = Store.getText(ctx, "shop", DEF_SHOP)
         val account = Store.getText(ctx, "account", DEF_ACCOUNT)
         val tpl = Store.getText(ctx, "template", DEF_TEMPLATE)
-        val formattedAmount = String.format(Locale.getDefault(), "%,d", amount as Any)
+        val formattedAmount = formatBirr(amount)
         return tpl
             .replace("{ሱቅ}", shop)
             .replace("{መጠን}", formattedAmount)
@@ -117,8 +124,8 @@ fun runPromo(ctx: Context, forceNow: Boolean): Int {
     for (i in list.indices) {
         if (sentCount >= batchLimit) break
         val cu = list[i]
-        val lastPromoDay: Long = Store.getInt(ctx, "promo_day_${cu.id}", -999).toLong()
-        val promoDaysPassed: Long = todayDay - lastPromoDay
+        val lastPromo: Long = Store.getInt(ctx, "promo_day_${cu.id}", -999).toLong()
+        val promoDaysPassed: Long = todayDay - lastPromo
         val due = forceNow || (promoDaysPassed >= intervalDays)
         if (!cu.promoOff && cu.phone.isNotBlank() && due) {
             val msg = Sms.buildPromo(ctx, cu)

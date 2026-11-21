@@ -39,7 +39,7 @@ object Sms {
         val shop = Store.getText(ctx, "shop", DEF_SHOP)
         val account = Store.getText(ctx, "account", DEF_ACCOUNT)
         val tpl = Store.getText(ctx, "template", DEF_TEMPLATE)
-        val formattedAmount = String.format(Locale.getDefault(), "%,d", amount)
+        val formattedAmount = String.format(Locale.getDefault(), "%,d", amount as Any)
         return tpl
             .replace("{ሱቅ}", shop)
             .replace("{መጠን}", formattedAmount)
@@ -82,8 +82,9 @@ fun runReminders(ctx: Context): Int {
     for (i in list.indices) {
         if (sentCount >= 8) break
         val d = list[i]
-        val elapsedDays: Long = todayDay - d.lastSentDay.toLong()
-        if (!d.paid && d.phone.isNotBlank() && d.amount > 0L && elapsedDays >= 3L) {
+        val lastDay: Long = d.lastSentDay.toLong()
+        val daysPassed: Long = todayDay - lastDay
+        if (!d.paid && d.phone.isNotBlank() && d.amount > 0L && daysPassed >= 3L) {
             val msg = Sms.buildMessage(ctx, d.amount)
             val ok = Sms.sendSms(ctx, d.phone, msg)
             Store.addLog(
@@ -117,8 +118,8 @@ fun runPromo(ctx: Context, forceNow: Boolean): Int {
         if (sentCount >= batchLimit) break
         val cu = list[i]
         val lastPromoDay: Long = Store.getInt(ctx, "promo_day_${cu.id}", -999).toLong()
-        val elapsedPromoDays: Long = todayDay - lastPromoDay
-        val due = forceNow || elapsedPromoDays >= intervalDays
+        val promoDaysPassed: Long = todayDay - lastPromoDay
+        val due = forceNow || (promoDaysPassed >= intervalDays)
         if (!cu.promoOff && cu.phone.isNotBlank() && due) {
             val msg = Sms.buildPromo(ctx, cu)
             val ok = Sms.sendSms(ctx, cu.phone, msg)

@@ -11,7 +11,11 @@ data class Debtor(
     val phone: String,
     val amount: Long,
     val paid: Boolean = false,
-    val lastSentDay: Long = 0L
+    val lastSentDay: Long = 0L,
+    val createdDay: Long = 0L,
+    val dueDay: Long = 0L,
+    val note: String = "",
+    val original: Long = 0L
 )
 
 data class Customer(
@@ -26,7 +30,11 @@ data class PaymentEntry(
     val debtorId: String,
     val customerName: String,
     val amount: Long,
-    val time: String
+    val time: String,
+    val method: String = "Cash",
+    val ref: String = "",
+    val note: String = "",
+    val day: Long = 0L
 )
 
 data class LogEntry(
@@ -46,14 +54,25 @@ object Store {
             val list = mutableListOf<Debtor>()
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                list.add(Debtor(
-                    o.optString("id", UUID.randomUUID().toString()),
-                    o.optString("name", ""), o.optString("phone", ""),
-                    o.optLong("amount", 0L), o.optBoolean("paid", false), o.optLong("last", 0L)
-                ))
+                list.add(
+                    Debtor(
+                        id = o.optString("id", UUID.randomUUID().toString()),
+                        name = o.optString("name", ""),
+                        phone = o.optString("phone", ""),
+                        amount = o.optLong("amount", 0L),
+                        paid = o.optBoolean("paid", false),
+                        lastSentDay = o.optLong("last", 0L),
+                        createdDay = o.optLong("created", 0L),
+                        dueDay = o.optLong("due", 0L),
+                        note = o.optString("note", ""),
+                        original = o.optLong("orig", 0L)
+                    )
+                )
             }
             list
-        } catch (_: Exception) { mutableListOf() }
+        } catch (_: Exception) {
+            mutableListOf()
+        }
     }
 
     fun save(c: Context, list: List<Debtor>) {
@@ -63,6 +82,8 @@ object Store {
                 JSONObject().put("id", it.id).put("name", it.name)
                     .put("phone", it.phone).put("amount", it.amount)
                     .put("paid", it.paid).put("last", it.lastSentDay)
+                    .put("created", it.createdDay).put("due", it.dueDay)
+                    .put("note", it.note).put("orig", it.original)
             )
         }
         prefs(c).edit().putString("debtors", arr.toString()).apply()
@@ -74,11 +95,18 @@ object Store {
             val list = mutableListOf<Customer>()
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                list.add(Customer(o.optString("id", UUID.randomUUID().toString()),
-                    o.optString("name", ""), o.optString("phone", ""), o.optBoolean("off", false)))
+                list.add(
+                    Customer(
+                        o.optString("id", UUID.randomUUID().toString()),
+                        o.optString("name", ""), o.optString("phone", ""),
+                        o.optBoolean("off", false)
+                    )
+                )
             }
             list
-        } catch (_: Exception) { mutableListOf() }
+        } catch (_: Exception) {
+            mutableListOf()
+        }
     }
 
     fun saveCustomers(c: Context, list: List<Customer>) {
@@ -98,11 +126,17 @@ object Store {
             val list = mutableListOf<LogEntry>()
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                list.add(LogEntry(o.optString("t"), o.optString("n"),
-                    o.optString("k"), o.optBoolean("ok", false)))
+                list.add(
+                    LogEntry(
+                        o.optString("t"), o.optString("n"),
+                        o.optString("k"), o.optBoolean("ok", false)
+                    )
+                )
             }
             list
-        } catch (_: Exception) { emptyList() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     fun addLog(c: Context, e: LogEntry) {
@@ -123,16 +157,31 @@ object Store {
         val arr = JSONArray(prefs(c).getString("payments", "[]") ?: "[]")
         (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
-            PaymentEntry(o.optString("id", UUID.randomUUID().toString()),
-                o.optString("debtorId"), o.optString("name"), o.optLong("amount"), o.optString("time"))
+            PaymentEntry(
+                id = o.optString("id", UUID.randomUUID().toString()),
+                debtorId = o.optString("debtorId"),
+                customerName = o.optString("name"),
+                amount = o.optLong("amount"),
+                time = o.optString("time"),
+                method = o.optString("method", "Cash"),
+                ref = o.optString("ref", ""),
+                note = o.optString("note", ""),
+                day = o.optLong("day", 0L)
+            )
         }
-    } catch (_: Exception) { emptyList() }
+    } catch (_: Exception) {
+        emptyList()
+    }
 
     fun addPayment(c: Context, payment: PaymentEntry) {
         val arr = JSONArray()
         (listOf(payment) + loadPayments(c)).take(2000).forEach { p ->
-            arr.put(JSONObject().put("id", p.id).put("debtorId", p.debtorId)
-                .put("name", p.customerName).put("amount", p.amount).put("time", p.time))
+            arr.put(
+                JSONObject().put("id", p.id).put("debtorId", p.debtorId)
+                    .put("name", p.customerName).put("amount", p.amount)
+                    .put("time", p.time).put("method", p.method)
+                    .put("ref", p.ref).put("note", p.note).put("day", p.day)
+            )
         }
         prefs(c).edit().putString("payments", arr.toString()).apply()
     }

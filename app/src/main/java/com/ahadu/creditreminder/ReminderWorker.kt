@@ -16,7 +16,9 @@ class ReminderWorker(
             return Result.success()
         }
         return try {
-            runReminders(applicationContext)
+            if (Store.getBool(applicationContext, "autoRemind", true)) {
+                runReminders(applicationContext)
+            }
             if (Store.getBool(applicationContext, "promoAuto", false)) {
                 runPromo(applicationContext, false)
             }

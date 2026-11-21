@@ -507,3 +507,668 @@ fun AuthFlowScreen(
         }
     }
 }
+
+@Composable
+fun DebtorsScreen(ctx: Context, debtors: MutableList<Debtor>) {
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        toast(ctx, if (granted) "ፈቃዱ ተሰጥቷል። እባክዎ መላኪያውን እንደገና ይጫኑ።" else "SMS ለመላክ ፈቃድ ያስፈልጋል።")
+    }
+    var showAdd by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf(false) }
+    var payFor by remember { mutableStateOf<Debtor?>(null) }
+    var sending by remember { mutableStateOf(false) }
+    val open = debtors.filter { !it.paid }
+    val total = open.sumOf { it.amount }
+
+    fun persist() {
+        Store.save(ctx, debtors.toList())
+    }
+
+    fun startSend() {
+        if (ctx.checkSelfPermission(Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            permLauncher.launch(Manifest.permission.SEND_SMS)
+            return
+        }
+        sending = true
+        Thread {
+            val n = runReminders(ctx)
+            Handler(Looper.getMainLooper()).post {
+                debtors.clear()
+                debtors.addAll(Store.load(ctx))
+                sending = false
+                toast(ctx, "ተልኳል: $n")
+            }
+        }.start()
+    }
+
+    Column(Modifier.fillMaxSize().background(ProBg)) {
+        Header("የብድር አስታዋሽ", "ያልተከፈሉ: ${open.size} ሰዎች")
+        Card(
+            Modifier.fillMaxWidth().padding(16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = ProCard)
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Text("ጠቅላላ ቀሪ ብድር", color = TextMuted, fontSize = 13.sp)
+                Text(
+                    String.format("%,d", total) + " ብር",
+                    color = NeonGreen, fontSize = 32.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { showAdd = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonGreen)
+                    ) { Text("+ አክል", color = Color(0xFF062113), fontWeight = FontWeight.Bold) }
+                    OutlinedButton(
+                        onClick = { confirm = true },
+                        enabled = !sending
+                    ) { Text(if (sending) "በመላክ ላይ..." else "አሁን ላክ", color = NeonBlue) }
+                }
+            }
+        }
+        LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+            items(debtors.sortedBy { it.paid }, key = { it.id }) { d ->
+                Card(
+                    Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = ProCard)
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(d.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            if (d.paid) Chip("ተከፍሏል", GreenSoft, GreenDark)
+                            else Chip("ያልተከፈለ", RedSoft, RedDark)
+                        }
+                        Text(
+                            if (d.phone.isBlank()) "📵 ስልክ የለም" else "📞 " + d.phone,
+                            color = TextMuted, fontSize = 13.sp
+                        )
+                        Text(
+                            String.format("%,d", d.amount) + " ብር",
+                            fontSize = 20.sp, fontWeight = FontWeight.Bold, color = NeonGreen
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (!d.paid) {
+                                FilledTonalButton(onClick = { payFor = d }) { Text("ክፍያ") }
+                            }
+                            OutlinedButton(onClick = {
+                                val i = debtors.indexOfFirst { it.id == d.id }
+                                if (i >= 0) {
+                                    debtors[i] = d.copy(paid = !d.paid)
+                                    persist()
+                                }
+                            }) { Text(if (d.paid) "መልስ" else "ተከፍሏል", color = NeonBlue) }
+                            TextButton(onClick = {
+                                debtors.removeAll { it.id == d.id }
+                                persist()
+                            }) { Text("ሰርዝ", color = RedDark) }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(16.dp)) }
+        }
+    }
+
+    if (confirm) {
+        val today = Sms.today()
+        val due = debtors.filter {
+            !it.paid && it.phone.isNotBlank() && it.amount > 0 && today - it.lastSentDay >= 3
+        }
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            containerColor = ProSurface,
+            title = { Text("መልእክት ይላክ?", color = Color.White) },
+            text = {
+                Column {
+                    Text(
+                        "${due.size} ሰዎች ይላክላቸዋል (በአንድ ጊዜ ከ8 አይበልጥም)። ወጪው ከስልክዎ ሲም ይቆረጣል።",
+                        color = Color.White
+                    )
+                    if (due.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("ምሳሌ:", color = TextMuted, fontSize = 12.sp)
+                        Text(Sms.buildMessage(ctx, due[0].amount), fontSize = 13.sp, color = NeonBlue)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    if (due.isEmpty()) {
+                        toast(ctx, "የሚላክ የለም")
+                    } else {
+                        startSend()
+                    }
+                }) { Text("ላክ", color = NeonGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirm = false }) { Text("ተው", color = TextMuted) }
+            }
+        )
+    }
+
+    if (showAdd) {
+        var name by remember { mutableStateOf("") }
+        var phone by remember { mutableStateOf("") }
+        var amount by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAdd = false },
+            containerColor = ProSurface,
+            title = { Text("አዲስ ዕዳ", color = Color.White) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = name, onValueChange = { name = it },
+                        label = { Text("ስም") }, singleLine = true, colors = proFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = phone, onValueChange = { phone = it },
+                        label = { Text("ስልክ (09...)") }, singleLine = true, colors = proFieldColors(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                    )
+                    OutlinedTextField(
+                        value = amount, onValueChange = { amount = it },
+                        label = { Text("ብር") }, singleLine = true, colors = proFieldColors(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val a = amount.filter { it in '0'..'9' }.toLongOrNull()
+                    if (name.isNotBlank() && a != null && a > 0) {
+                        debtors.add(Debtor(name = name.trim(), phone = phone.trim(), amount = a))
+                        persist()
+                        showAdd = false
+                    } else {
+                        toast(ctx, "ስም እና ብር ያስገቡ")
+                    }
+                }) { Text("አስቀምጥ", color = NeonGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAdd = false }) { Text("ተው", color = TextMuted) }
+            }
+        )
+    }
+
+    val pd = payFor
+    if (pd != null) {
+        var txt by remember(pd.id) { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { payFor = null },
+            containerColor = ProSurface,
+            title = { Text("ክፍያ: ${pd.name}", color = Color.White) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("ቀሪ: ${String.format("%,d", pd.amount)} ብር", color = NeonGreen)
+                    OutlinedTextField(
+                        value = txt, onValueChange = { txt = it },
+                        label = { Text("የተከፈለ ብር") }, singleLine = true, colors = proFieldColors(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val p = txt.filter { it in '0'..'9' }.toLongOrNull()
+                    if (p != null && p > 0 && p <= pd.amount) {
+                        val i = debtors.indexOfFirst { it.id == pd.id }
+                        if (i >= 0) {
+                            val left = pd.amount - p
+                            Store.addPayment(
+                                ctx,
+                                PaymentEntry(
+                                    debtorId = pd.id,
+                                    customerName = pd.name,
+                                    amount = p,
+                                    time = Sms.stamp()
+                                )
+                            )
+                            debtors[i] = if (left == 0L) pd.copy(amount = 0L, paid = true)
+                            else pd.copy(amount = left)
+                            persist()
+                        }
+                        payFor = null
+                    } else {
+                        toast(
+                            ctx,
+                            if (p != null && p > pd.amount) "ክፍያው ከቀሪ ብድሩ መብለጥ አይችልም"
+                            else "ትክክለኛ የክፍያ መጠን ያስገቡ"
+                        )
+                    }
+                }) { Text("አስቀምጥ", color = NeonGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { payFor = null }) { Text("ተው", color = TextMuted) }
+            }
+        )
+    }
+}
+
+@Composable
+fun CustomersScreen(ctx: Context, customers: MutableList<Customer>) {
+    val promoPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        toast(ctx, if (granted) "ፈቃዱ ተሰጥቷል። መላኪያውን እንደገና ይጫኑ።" else "SMS ፈቃድ አልተሰጠም።")
+    }
+    var showAdd by remember { mutableStateOf(false) }
+    var showImport by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf(false) }
+    var promoText by remember { mutableStateOf(Store.getText(ctx, "promoText", Sms.DEF_PROMO)) }
+    var interval by remember { mutableStateOf(Store.getInt(ctx, "promoInterval", 14)) }
+    var batch by remember { mutableStateOf(Store.getInt(ctx, "promoBatch", 10)) }
+    var auto by remember { mutableStateOf(Store.getBool(ctx, "promoAuto", false)) }
+    var sending by remember { mutableStateOf(false) }
+
+    fun persist() {
+        Store.saveCustomers(ctx, customers.toList())
+    }
+
+    fun saveSettings() {
+        Store.setText(ctx, "promoText", promoText)
+        Store.setInt(ctx, "promoInterval", interval)
+        Store.setInt(ctx, "promoBatch", batch)
+    }
+
+    fun startSend() {
+        if (ctx.checkSelfPermission(Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            promoPermission.launch(Manifest.permission.SEND_SMS)
+            return
+        }
+        saveSettings()
+        sending = true
+        Thread {
+            val n = runPromo(ctx, true)
+            Handler(Looper.getMainLooper()).post {
+                sending = false
+                toast(ctx, "ተልኳል: $n")
+            }
+        }.start()
+    }
+
+    LazyColumn(Modifier.fillMaxSize().background(ProBg)) {
+        item { Header("ደንበኞች", "ጠቅላላ: ${customers.size} ሰዎች") }
+        item {
+            Card(
+                Modifier.fillMaxWidth().padding(16.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = ProCard)
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("📣 የማስታወቂያ መልእክት", fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Color.White)
+                    OutlinedTextField(
+                        value = promoText, onValueChange = { promoText = it },
+                        label = { Text("መልእክት") }, colors = proFieldColors(), modifier = Modifier.fillMaxWidth()
+                    )
+                    Text("በመልእክቱ ውስጥ፦ {ስም} {ሱቅ}", color = TextMuted, fontSize = 12.sp)
+                    Text("በየስንት ቀን ይደገም", fontSize = 13.sp, color = Color.White)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(14, 21).forEach { d ->
+                            if (interval == d) {
+                                Button(
+                                    onClick = { interval = d },
+                                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen)
+                                ) { Text("$d ቀን", color = Color(0xFF062113), fontWeight = FontWeight.Bold) }
+                            } else {
+                                OutlinedButton(onClick = { interval = d }) { Text("$d ቀን", color = NeonBlue) }
+                            }
+                        }
+                    }
+                    Text("በአንድ ጊዜ የሚላክ ብዛት", fontSize = 13.sp, color = Color.White)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(5, 10, 20).forEach { b ->
+                            if (batch == b) {
+                                Button(
+                                    onClick = { batch = b },
+                                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen)
+                                ) { Text("$b", color = Color(0xFF062113), fontWeight = FontWeight.Bold) }
+                            } else {
+                                OutlinedButton(onClick = { batch = b }) { Text("$b", color = NeonBlue) }
+                            }
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("በራስ-ሰር ላክ", color = Color.White)
+                        Switch(
+                            checked = auto,
+                            onCheckedChange = {
+                                auto = it
+                                Store.setBool(ctx, "promoAuto", it)
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = NeonGreen, checkedTrackColor = GreenSoft)
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                saveSettings()
+                                toast(ctx, "ተቀምጧል")
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonGreen)
+                        ) { Text("አስቀምጥ", color = Color(0xFF062113), fontWeight = FontWeight.Bold) }
+                        OutlinedButton(
+                            onClick = { confirm = true },
+                            enabled = !sending
+                        ) { Text(if (sending) "በመላክ ላይ..." else "አሁን ላክ", color = NeonBlue) }
+                    }
+                }
+            }
+        }
+        item {
+            Row(
+                Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = { showAdd = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen)
+                ) { Text("+ ደንበኛ", color = Color(0xFF062113), fontWeight = FontWeight.Bold) }
+                OutlinedButton(onClick = { showImport = true }) { Text("📋 ዝርዝር ለጥፍ", color = NeonBlue) }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        items(customers, key = { it.id }) { cu ->
+            Card(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = ProCard)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(cu.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Color.White)
+                        Text(
+                            if (cu.phone.isBlank()) "📵 ስልክ የለም" else cu.phone,
+                            color = TextMuted, fontSize = 13.sp
+                        )
+                    }
+                    Switch(
+                        checked = !cu.promoOff,
+                        onCheckedChange = { on ->
+                            val i = customers.indexOfFirst { it.id == cu.id }
+                            if (i >= 0) {
+                                customers[i] = cu.copy(promoOff = !on)
+                                persist()
+                            }
+                        },
+                        colors = SwitchDefaults.colors(checkedThumbColor = NeonGreen, checkedTrackColor = GreenSoft)
+                    )
+                    TextButton(onClick = {
+                        customers.removeAll { it.id == cu.id }
+                        persist()
+                    }) { Text("✕", color = RedDark) }
+                }
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+
+    if (confirm) {
+        val total = customers.count { !it.promoOff && it.phone.isNotBlank() }
+        val shown = if (total < batch) total else batch
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            containerColor = ProSurface,
+            title = { Text("ማስታወቂያ ይላክ?", color = Color.White) },
+            text = {
+                Column {
+                    Text(
+                        "እስከ $shown ሰዎች ይላክላቸዋል (ከጠቅላላ $total)። ወጪው ከስልክዎ ሲም ይቆረጣል።",
+                        color = Color.White
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("ምሳሌ:", color = TextMuted, fontSize = 12.sp)
+                    Text(
+                        promoText.replace("{ስም}", "ደንበኛ")
+                            .replace("{ሱቅ}", Store.getText(ctx, "shop", Sms.DEF_SHOP)),
+                        fontSize = 13.sp,
+                        color = NeonBlue
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    if (total == 0) {
+                        toast(ctx, "የሚላክ ደንበኛ የለም")
+                    } else {
+                        startSend()
+                    }
+                }) { Text("ላክ", color = NeonGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirm = false }) { Text("ተው", color = TextMuted) }
+            }
+        )
+    }
+
+    if (showAdd) {
+        var name by remember { mutableStateOf("") }
+        var phone by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAdd = false },
+            containerColor = ProSurface,
+            title = { Text("አዲስ ደንበኛ", color = Color.White) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = name, onValueChange = { name = it },
+                        label = { Text("ስም") }, singleLine = true, colors = proFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = phone, onValueChange = { phone = it },
+                        label = { Text("ስልክ (09...)") }, singleLine = true, colors = proFieldColors(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (name.isNotBlank()) {
+                        customers.add(Customer(name = name.trim(), phone = phone.trim()))
+                        persist()
+                        showAdd = false
+                    } else {
+                        toast(ctx, "ስም ያስገቡ")
+                    }
+                }) { Text("አስቀምጥ", color = NeonGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAdd = false }) { Text("ተው", color = TextMuted) }
+            }
+        )
+    }
+
+    if (showImport) {
+        var text by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showImport = false },
+            containerColor = ProSurface,
+            title = { Text("ዝርዝር ለጥፍ", color = Color.White) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("እያንዳንዱ ሰው በአንድ መስመር፦ ስም እና ስልክ", fontSize = 13.sp, color = TextMuted)
+                    OutlinedTextField(
+                        value = text, onValueChange = { text = it },
+                        label = { Text("ዝርዝር") }, colors = proFieldColors(), modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val parsed = parseCustomers(text)
+                    val have = customers.map { Sms.normalize(it.phone) }.toMutableSet()
+                    var added = 0
+                    for (p in parsed) {
+                        val n = Sms.normalize(p.phone)
+                        if (p.phone.isNotBlank() && n in have) continue
+                        customers.add(p)
+                        have.add(n)
+                        added++
+                    }
+                    persist()
+                    showImport = false
+                    toast(ctx, "ተጨምረዋል: $added")
+                }) { Text("አስገባ", color = NeonGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImport = false }) { Text("ተው", color = TextMuted) }
+            }
+        )
+    }
+}
+
+@Composable
+fun HistoryScreen(ctx: Context) {
+    val log = remember { Store.loadLog(ctx) }
+    Column(Modifier.fillMaxSize().background(ProBg)) {
+        Header("የላኩ ታሪክ", "የመጨረሻዎቹ ${log.size} መልእክቶች")
+        if (log.isEmpty()) {
+            Text("እስካሁን ምንም አልተላከም", color = TextMuted, modifier = Modifier.padding(20.dp))
+        }
+        LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+            items(log) { e ->
+                Card(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = ProCard)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                (if (e.ok) "✅ " else "❌ ") + e.name,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                            Text(e.time, color = TextMuted, fontSize = 12.sp)
+                        }
+                        Chip(e.kind, GreenSoft, GreenDark)
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(16.dp)) }
+        }
+    }
+}
+
+@Composable
+fun SettingsScreen(ctx: Context) {
+    var shop by remember { mutableStateOf(Store.getText(ctx, "shop", Sms.DEF_SHOP)) }
+    var account by remember { mutableStateOf(Store.getText(ctx, "account", Sms.DEF_ACCOUNT)) }
+    var template by remember { mutableStateOf(Store.getText(ctx, "template", Sms.DEF_TEMPLATE)) }
+    var showRestore by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize().background(ProBg)) {
+        Header("ቅንብር", "የሱቅ መረጃ እና ምትኬ")
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = shop, onValueChange = { shop = it },
+                label = { Text("የሱቅ ስም") }, colors = proFieldColors(), modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = account, onValueChange = { account = it },
+                label = { Text("የመክፈያ አካውንት") }, colors = proFieldColors(), modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = template, onValueChange = { template = it },
+                label = { Text("የብድር መልእክት ጽሑፍ") }, colors = proFieldColors(), modifier = Modifier.fillMaxWidth()
+            )
+            Text("በመልእክቱ ውስጥ፦ {ሱቅ} {መጠን} {አካውንት}", color = TextMuted, fontSize = 12.sp)
+            Button(
+                onClick = {
+                    Store.setText(ctx, "shop", shop)
+                    Store.setText(ctx, "account", account)
+                    Store.setText(ctx, "template", template)
+                    toast(ctx, "ተቀምጧል")
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = NeonGreen)
+            ) { Text("አስቀምጥ", color = Color(0xFF062113), fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "የተመዘገቡ ክፍያዎች: ${Store.loadPayments(ctx).size}",
+                color = NeonGreen,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (Auth.savedEmail(ctx).isNotBlank()) {
+                Text(
+                    "የባክአፕ ኢሜይል: ${Auth.savedEmail(ctx)}",
+                    color = NeonBlue,
+                    fontSize = 13.sp
+                )
+            }
+            Text("💾 ምትኬ", fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Color.White)
+            Text(
+                "መረጃው በዚህ ስልክ ላይ ብቻ ነው የሚቀመጠው። ምትኬን ወደ የተመዘገበ ኢሜይል፣ Telegram ወይም Gmail ልከው ያስቀምጡ።",
+                color = TextMuted, fontSize = 13.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        if (!Auth.sendBackupToRegisteredEmail(ctx)) {
+                            toast(ctx, "የተመዘገበ ኢሜይል አልተገኘም")
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonGreen)
+                ) { Text("ምትኬ ወደ ኢሜይል", color = Color(0xFF062113), fontWeight = FontWeight.Bold) }
+                OutlinedButton(onClick = {
+                    val i = Intent(Intent.ACTION_SEND)
+                    i.type = "text/plain"
+                    i.putExtra(Intent.EXTRA_TEXT, Store.backup(ctx))
+                    ctx.startActivity(Intent.createChooser(i, "ምትኬ"))
+                }) { Text("ምትኬ አጋራ", color = NeonBlue) }
+                OutlinedButton(onClick = { showRestore = true }) { Text("መልስ", color = NeonPurple) }
+            }
+        }
+    }
+
+    if (showRestore) {
+        var text by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showRestore = false },
+            containerColor = ProSurface,
+            title = { Text("ምትኬ መልስ", color = Color.White) },
+            text = {
+                OutlinedTextField(
+                    value = text, onValueChange = { text = it },
+                    label = { Text("የምትኬ ጽሑፍ ይለጥፉ") }, colors = proFieldColors(), modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (Store.restore(ctx, text)) {
+                        showRestore = false
+                        toast(ctx, "ተመልሷል። መተግበሪያውን ዘግተው እንደገና ይክፈቱ")
+                    } else {
+                        toast(ctx, "ጽሑፉ ትክክል አይደለም")
+                    }
+                }) { Text("መልስ", color = NeonGreen) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestore = false }) { Text("ተው", color = TextMuted) }
+            }
+        )
+    }
+}
+

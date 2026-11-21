@@ -82,18 +82,16 @@ object Sms {
 }
 
 fun runReminders(ctx: Context): Int {
-    val todayDay: Long = Sms.today().toLong()
+    val todayDay: Long = Sms.today()
     val list = Store.load(ctx)
     var sentCount = 0
 
     for (i in list.indices) {
         if (sentCount >= 8) break
         val d = list[i]
-        val lastDay: Long = d.lastSentDay.toLong()
-        val daysPassed: Long = todayDay - lastDay
-        val amountLong: Long = d.amount.toLong()
-        if (!d.paid && d.phone.isNotBlank() && amountLong > 0L && daysPassed >= 3L) {
-            val msg = Sms.buildMessage(ctx, amountLong)
+        val daysPassed: Long = todayDay - d.lastSentDay
+        if (!d.paid && d.phone.isNotBlank() && d.amount > 0L && daysPassed >= 3L) {
+            val msg = Sms.buildMessage(ctx, d.amount)
             val ok = Sms.sendSms(ctx, d.phone, msg)
             Store.addLog(
                 ctx,
@@ -105,9 +103,10 @@ fun runReminders(ctx: Context): Int {
                 )
             )
             if (ok) {
-                list[i] = d.copy(lastSentDay = todayDay.toInt())
+                list[i] = d.copy(lastSentDay = todayDay)
                 sentCount++
             }
+            Thread.sleep(2500)
         }
     }
 
@@ -116,7 +115,7 @@ fun runReminders(ctx: Context): Int {
 }
 
 fun runPromo(ctx: Context, forceNow: Boolean): Int {
-    val todayDay: Long = Sms.today().toLong()
+    val todayDay: Long = Sms.today()
     val intervalDays: Long = Store.getInt(ctx, "promoInterval", 14).coerceAtLeast(1).toLong()
     val batchLimit: Int = Store.getInt(ctx, "promoBatch", 10).coerceAtLeast(1)
     val list = Store.loadCustomers(ctx)
@@ -144,6 +143,7 @@ fun runPromo(ctx: Context, forceNow: Boolean): Int {
                 Store.setInt(ctx, "promo_day_${cu.id}", todayDay.toInt())
                 sentCount++
             }
+            Thread.sleep(2500)
         }
     }
 

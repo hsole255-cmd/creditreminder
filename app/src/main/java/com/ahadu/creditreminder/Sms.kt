@@ -24,10 +24,10 @@ object Sms {
         }
     }
 
-    fun today(): Int {
+    fun today(): Long {
         val dayMs = 86_400_000L
         val eatNow = System.currentTimeMillis() + 3L * 3_600_000L
-        return (eatNow / dayMs).toInt()
+        return eatNow / dayMs
     }
 
     fun stamp(): String {
@@ -82,7 +82,8 @@ fun runReminders(ctx: Context): Int {
     for (i in list.indices) {
         if (sentCount >= 8) break
         val d = list[i]
-        if (!d.paid && d.phone.isNotBlank() && d.amount > 0 && (todayDay - d.lastSentDay) >= 3) {
+        val lastDay = d.lastSentDay.toLong()
+        if (!d.paid && d.phone.isNotBlank() && d.amount > 0 && (todayDay - lastDay) >= 3L) {
             val msg = Sms.buildMessage(ctx, d.amount)
             val ok = Sms.sendSms(ctx, d.phone, msg)
             Store.addLog(
@@ -95,7 +96,7 @@ fun runReminders(ctx: Context): Int {
                 )
             )
             if (ok) {
-                list[i] = d.copy(lastSentDay = todayDay)
+                list[i] = d.copy(lastSentDay = todayDay.toInt())
                 sentCount++
             }
         }
@@ -107,7 +108,7 @@ fun runReminders(ctx: Context): Int {
 
 fun runPromo(ctx: Context, forceNow: Boolean): Int {
     val todayDay = Sms.today()
-    val interval = Store.getInt(ctx, "promoInterval", 14).coerceAtLeast(1)
+    val intervalDays = Store.getInt(ctx, "promoInterval", 14).coerceAtLeast(1).toLong()
     val batchLimit = Store.getInt(ctx, "promoBatch", 10).coerceAtLeast(1)
     val list = Store.loadCustomers(ctx)
     var sentCount = 0
@@ -115,7 +116,8 @@ fun runPromo(ctx: Context, forceNow: Boolean): Int {
     for (i in list.indices) {
         if (sentCount >= batchLimit) break
         val cu = list[i]
-        val due = forceNow || (todayDay - cu.lastPromoDay) >= interval
+        val lastPromo = Store.getInt(ctx, "promo_day_${cu.id}", -999).toLong()
+        val due = forceNow || (todayDay - lastPromo) >= intervalDays
         if (!cu.promoOff && cu.phone.isNotBlank() && due) {
             val msg = Sms.buildPromo(ctx, cu)
             val ok = Sms.sendSms(ctx, cu.phone, msg)
@@ -129,7 +131,7 @@ fun runPromo(ctx: Context, forceNow: Boolean): Int {
                 )
             )
             if (ok) {
-                list[i] = cu.copy(lastPromoDay = todayDay)
+                Store.setInt(ctx, "promo_day_${cu.id}", todayDay.toInt())
                 sentCount++
             }
         }
